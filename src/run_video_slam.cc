@@ -66,6 +66,8 @@ int mono_tracking(const std::shared_ptr<stella_vslam::config>& cfg,
                   const std::string& eval_log_dir,
                   const std::string& map_db_path,
                   const double start_timestamp,
+                  const std::string& pc_path,
+                  const std::string& img_path,
                   const std::string& viewer_string) {
     // load the mask image
     const cv::Mat mask = mask_img_path.empty() ? cv::Mat{} : cv::imread(mask_img_path, cv::IMREAD_GRAYSCALE);
@@ -206,6 +208,16 @@ int mono_tracking(const std::shared_ptr<stella_vslam::config>& cfg,
     std::cout << "median tracking time: " << track_times.at(track_times.size() / 2) << "[s]" << std::endl;
     std::cout << "mean tracking time: " << total_track_time / track_times.size() << "[s]" << std::endl;
 
+    if (!pc_path.empty()) {
+        if (!slam->save_point_cloud(pc_path)) {
+            std::cerr << "Unable to save the point cloud." << std::endl;
+        }
+    }
+    if (!img_path.empty()) {
+        if (!slam->save_keyframes(img_path)) {
+            std::cerr << "Unable to save the keyframes." << std::endl;
+        }
+    }
     if (!map_db_path.empty()) {
         if (!slam->save_map_database(map_db_path)) {
             return EXIT_FAILURE;
@@ -240,6 +252,8 @@ int main(int argc, char* argv[]) {
     auto temporal_mapping = op.add<popl::Switch>("", "temporal-mapping", "enable temporal mapping");
     auto start_timestamp = op.add<popl::Value<double>>("t", "start-timestamp", "timestamp of the start of the video capture");
     auto viewer = op.add<popl::Value<std::string>>("", "viewer", "viewer [pangolin_viewer, socket_publisher, none]");
+    auto point_cloud_path = op.add<popl::Value<std::string>>("p", "pc-out", "store point cloud at this path after slam", "");
+    auto keyframe_path = op.add<popl::Value<std::string>>("k", "kf-out", "store keyframes in this folder after slam", "");
     try {
         op.parse(argc, argv);
     }
@@ -381,6 +395,8 @@ int main(int argc, char* argv[]) {
                             eval_log_dir->value(),
                             map_db_path_out->value(),
                             timestamp,
+                            point_cloud_path->value(),
+                            keyframe_path->value(),
                             viewer_string);
     }
     else {
