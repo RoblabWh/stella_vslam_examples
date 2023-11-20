@@ -14,6 +14,7 @@
 #include <chrono>
 #include <fstream>
 #include <numeric>
+#include <csignal>
 
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
@@ -33,8 +34,28 @@ namespace fs = ghc::filesystem;
 #include <gperftools/profiler.h>
 #endif
 
-int mono_tracking(const std::shared_ptr<stella_vslam::system>& slam,
-                  const std::shared_ptr<stella_vslam::config>& cfg,
+std::shared_ptr<stella_vslam::system> slam;
+#ifdef HAVE_PANGOLIN_VIEWER
+std::shared_ptr<pangolin_viewer::viewer> viewer;
+#endif
+#ifdef HAVE_SOCKET_PUBLISHER
+std::shared_ptr<socket_publisher::publisher> publisher;
+#endif
+
+void sighandler(int signum) {
+    (void) signum;
+    slam->request_terminate();
+#ifdef HAVE_PANGOLIN_VIEWER
+    if (viewer)
+        viewer->request_terminate();
+#endif
+#ifdef HAVE_SOCKET_PUBLISHER
+    if (publisher)
+        publisher->request_terminate();
+#endif
+}
+
+int mono_tracking(const std::shared_ptr<stella_vslam::config>& cfg,
                   const std::string& video_file_path,
                   const std::string& mask_img_path,
                   const unsigned int frame_skip,
@@ -52,7 +73,6 @@ int mono_tracking(const std::shared_ptr<stella_vslam::system>& slam,
     // create a viewer object
     // and pass the frame_publisher and the map_publisher
 #ifdef HAVE_PANGOLIN_VIEWER
-    std::shared_ptr<pangolin_viewer::viewer> viewer;
     if (viewer_string == "pangolin_viewer") {
         viewer = std::make_shared<pangolin_viewer::viewer>(
             stella_vslam::util::yaml_optional_ref(cfg->yaml_node_, "PangolinViewer"),
@@ -62,7 +82,6 @@ int mono_tracking(const std::shared_ptr<stella_vslam::system>& slam,
     }
 #endif
 #ifdef HAVE_SOCKET_PUBLISHER
-    std::shared_ptr<socket_publisher::publisher> publisher;
     if (viewer_string == "socket_publisher") {
         publisher = std::make_shared<socket_publisher::publisher>(
             stella_vslam::util::yaml_optional_ref(cfg->yaml_node_, "SocketPublisher"),
@@ -71,6 +90,8 @@ int mono_tracking(const std::shared_ptr<stella_vslam::system>& slam,
             slam->get_map_publisher());
     }
 #endif
+
+    signal(SIGINT, sighandler);
 
     auto video = cv::VideoCapture(video_file_path, cv::CAP_FFMPEG);
     if (!video.isOpened()) {
@@ -318,7 +339,7 @@ int main(int argc, char* argv[]) {
     }
 
     // build a slam system
-    auto slam = std::make_shared<stella_vslam::system>(cfg, vocab_file_path->value());
+    slam = std::make_shared<stella_vslam::system>(cfg, vocab_file_path->value());
     bool need_initialize = true;
     if (map_db_path_in->is_set()) {
         need_initialize = false;
@@ -349,8 +370,7 @@ int main(int argc, char* argv[]) {
     // run tracking
     int ret;
     if (slam->get_camera()->setup_type_ == stella_vslam::camera::setup_type_t::Monocular) {
-        ret = mono_tracking(slam,
-                            cfg,
+        ret = mono_tracking(cfg,
                             video_file_path->value(),
                             mask_img_path->value(),
                             frame_skip->value(),
