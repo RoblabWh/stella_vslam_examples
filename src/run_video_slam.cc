@@ -43,7 +43,7 @@ std::shared_ptr<socket_publisher::publisher> publisher;
 #endif
 
 void sighandler(int signum) {
-    (void) signum;
+    (void)signum;
     slam->request_terminate();
 #ifdef HAVE_PANGOLIN_VIEWER
     if (viewer)
@@ -55,62 +55,28 @@ void sighandler(int signum) {
 #endif
 }
 
-int mono_tracking(const std::shared_ptr<stella_vslam::config>& cfg,
-                  const std::string& video_file_path,
-                  const std::string& mask_img_path,
-                  const unsigned int frame_skip,
-                  const unsigned int start_time,
-                  const bool no_sleep,
-                  const bool wait_loop_ba,
-                  const bool auto_term,
-                  const std::string& eval_log_dir,
-                  const std::string& map_db_path,
-                  const double start_timestamp,
-                  const std::string& pc_path,
-                  const std::string& img_path,
-                  const std::string& viewer_string) {
-    // load the mask image
-    const cv::Mat mask = mask_img_path.empty() ? cv::Mat{} : cv::imread(mask_img_path, cv::IMREAD_GRAYSCALE);
-
-    // create a viewer object
-    // and pass the frame_publisher and the map_publisher
-#ifdef HAVE_PANGOLIN_VIEWER
-    if (viewer_string == "pangolin_viewer") {
-        viewer = std::make_shared<pangolin_viewer::viewer>(
-            stella_vslam::util::yaml_optional_ref(cfg->yaml_node_, "PangolinViewer"),
-            slam,
-            slam->get_frame_publisher(),
-            slam->get_map_publisher());
-    }
-#endif
-#ifdef HAVE_SOCKET_PUBLISHER
-    if (viewer_string == "socket_publisher") {
-        publisher = std::make_shared<socket_publisher::publisher>(
-            stella_vslam::util::yaml_optional_ref(cfg->yaml_node_, "SocketPublisher"),
-            slam,
-            slam->get_frame_publisher(),
-            slam->get_map_publisher());
-    }
-#endif
-
-    signal(SIGINT, sighandler);
-
-    auto video = cv::VideoCapture(video_file_path, cv::CAP_FFMPEG);
-    if (!video.isOpened()) {
-        std::cerr << "Unable to open the video." << std::endl;
-        return EXIT_FAILURE;
-    }
-    video.set(0, start_time);
-    std::vector<double> track_times;
-
-    cv::Mat frame;
-
-    unsigned int num_frame = 0;
+void mono_tracking(const std::vector<std::string>& video_file_paths,
+                   const cv::Mat& mask,
+                   const unsigned int frame_skip,
+                   const std::vector<unsigned int>& start_times,
+                   const bool no_sleep,
+                   const bool wait_loop_ba,
+                   const double start_timestamp,
+                   std::vector<double>& track_times) {
     double timestamp = start_timestamp;
+    for (unsigned int i = 0; i < video_file_paths.size(); ++i) {
+        auto video = cv::VideoCapture(video_file_paths[i]);
+        if (!video.isOpened()) {
+            spdlog::warn("Unable to open video \"{}\"", video_file_paths[i]);
+            continue;
+        }
+        video.set(0, start_times[i]);
 
-    bool is_not_end = true;
-    // run the slam in another thread
-    std::thread thread([&]() {
+        cv::Mat frame;
+
+        unsigned int num_frame = 0;
+
+        bool is_not_end = true;
         while (is_not_end) {
             // wait until the loop BA is finished
             if (wait_loop_ba) {
@@ -151,80 +117,7 @@ int mono_tracking(const std::shared_ptr<stella_vslam::config>& cfg,
                 break;
             }
         }
-
-        // wait until the loop BA is finished
-        while (slam->loop_BA_is_running()) {
-            std::this_thread::sleep_for(std::chrono::microseconds(5000));
-        }
-
-        // automatically close the viewer
-        if (auto_term) {
-            if (viewer_string == "pangolin_viewer") {
-#ifdef HAVE_PANGOLIN_VIEWER
-                viewer->request_terminate();
-#endif
-            }
-            if (viewer_string == "socket_publisher") {
-#ifdef HAVE_SOCKET_PUBLISHER
-                publisher->request_terminate();
-#endif
-            }
-        }
-    });
-
-    // run the viewer in the current thread
-    if (viewer_string == "pangolin_viewer") {
-#ifdef HAVE_PANGOLIN_VIEWER
-        viewer->run();
-#endif
     }
-    if (viewer_string == "socket_publisher") {
-#ifdef HAVE_SOCKET_PUBLISHER
-        publisher->run();
-#endif
-    }
-
-    thread.join();
-
-    // shutdown the slam process
-    slam->shutdown();
-
-    if (!eval_log_dir.empty()) {
-        // output the trajectories for evaluation
-        slam->save_frame_trajectory(eval_log_dir + "/frame_trajectory.txt", "TUM");
-        slam->save_keyframe_trajectory(eval_log_dir + "/keyframe_trajectory.txt", "TUM");
-        // output the tracking times for evaluation
-        std::ofstream ofs(eval_log_dir + "/track_times.txt", std::ios::out);
-        if (ofs.is_open()) {
-            for (const auto track_time : track_times) {
-                ofs << track_time << std::endl;
-            }
-            ofs.close();
-        }
-    }
-
-    std::sort(track_times.begin(), track_times.end());
-    const auto total_track_time = std::accumulate(track_times.begin(), track_times.end(), 0.0);
-    std::cout << "median tracking time: " << track_times.at(track_times.size() / 2) << "[s]" << std::endl;
-    std::cout << "mean tracking time: " << total_track_time / track_times.size() << "[s]" << std::endl;
-
-    if (!pc_path.empty()) {
-        if (!slam->save_point_cloud(pc_path)) {
-            std::cerr << "Unable to save the point cloud." << std::endl;
-        }
-    }
-    if (!img_path.empty()) {
-        if (!slam->save_keyframes(img_path)) {
-            std::cerr << "Unable to save the keyframes." << std::endl;
-        }
-    }
-    if (!map_db_path.empty()) {
-        if (!slam->save_map_database(map_db_path)) {
-            return EXIT_FAILURE;
-        }
-    }
-
-    return EXIT_SUCCESS;
 }
 
 int main(int argc, char* argv[]) {
@@ -240,7 +133,7 @@ int main(int argc, char* argv[]) {
     auto config_file_path = op.add<popl::Value<std::string>>("c", "config", "config file path");
     auto mask_img_path = op.add<popl::Value<std::string>>("", "mask", "mask image path", "");
     auto frame_skip = op.add<popl::Value<unsigned int>>("", "frame-skip", "interval of frame skip", 1);
-    auto start_time = op.add<popl::Value<unsigned int>>("s", "start-time", "time to start playing [milli seconds]", 0);
+    auto start_time = op.add<popl::Value<unsigned int>>("s", "start-time", "time to start playing [milli seconds]");
     auto no_sleep = op.add<popl::Switch>("", "no-sleep", "not wait for next frame in real time");
     auto wait_loop_ba = op.add<popl::Switch>("", "wait-loop-ba", "wait until the loop BA is finished");
     auto auto_term = op.add<popl::Switch>("", "auto-term", "automatically terminate the viewer");
@@ -281,6 +174,15 @@ int main(int argc, char* argv[]) {
         std::cerr << std::endl;
         std::cerr << op << std::endl;
         return EXIT_FAILURE;
+    }
+
+    std::vector<std::string> video_file_paths;
+    for (size_t i = 0; i < video_file_path->count(); ++i) {
+        video_file_paths.push_back(video_file_path->value(i));
+    }
+    std::vector<unsigned int> start_times(video_file_paths.size(), 0);
+    for (size_t i = 0; i < start_time->count(); ++i) {
+        start_times[i] = start_time->value(i);
     }
 
     // viewer
@@ -381,31 +283,130 @@ int main(int argc, char* argv[]) {
         slam->disable_loop_detector();
     }
 
-    // run tracking
-    int ret;
-    if (slam->get_camera()->setup_type_ == stella_vslam::camera::setup_type_t::Monocular) {
-        ret = mono_tracking(cfg,
-                            video_file_path->value(),
-                            mask_img_path->value(),
-                            frame_skip->value(),
-                            start_time->value(),
-                            no_sleep->is_set(),
-                            wait_loop_ba->is_set(),
-                            auto_term->is_set(),
-                            eval_log_dir->value(),
-                            map_db_path_out->value(),
-                            timestamp,
-                            point_cloud_path->value(),
-                            keyframe_path->value(),
-                            viewer_string);
+    // load the mask image
+    const cv::Mat mask = mask_img_path->is_set() ? cv::imread(mask_img_path->value(), cv::IMREAD_GRAYSCALE) : cv::Mat();
+
+    // create a viewer object
+    // and pass the frame_publisher and the map_publisher
+#ifdef HAVE_PANGOLIN_VIEWER
+    if (viewer_string == "pangolin_viewer") {
+        viewer = std::make_shared<pangolin_viewer::viewer>(
+            stella_vslam::util::yaml_optional_ref(cfg->yaml_node_, "PangolinViewer"),
+            slam,
+            slam->get_frame_publisher(),
+            slam->get_map_publisher());
     }
-    else {
-        throw std::runtime_error("Invalid setup type: " + slam->get_camera()->get_setup_type_string());
+#endif
+#ifdef HAVE_SOCKET_PUBLISHER
+    if (viewer_string == "socket_publisher") {
+        publisher = std::make_shared<socket_publisher::publisher>(
+            stella_vslam::util::yaml_optional_ref(cfg->yaml_node_, "SocketPublisher"),
+            slam,
+            slam->get_frame_publisher(),
+            slam->get_map_publisher());
+    }
+#endif
+
+    // set signal handler for clean shutdown on ctrl-c
+    signal(SIGINT, sighandler);
+
+    // run tracking
+    std::vector<double> track_times;
+    std::unique_ptr<std::thread> thread;
+
+    // run the slam in another thread
+    thread = std::make_unique<std::thread>([&]() {
+        if (slam->get_camera()->setup_type_ == stella_vslam::camera::setup_type_t::Monocular) {
+            mono_tracking(video_file_paths,
+                          mask,
+                          frame_skip->value(),
+                          start_times,
+                          no_sleep->is_set(),
+                          wait_loop_ba->is_set(),
+                          timestamp,
+                          track_times);
+        }
+        else {
+            throw std::runtime_error("Invalid setup type: " + slam->get_camera()->get_setup_type_string());
+        }
+
+        // wait until the loop BA is finished
+        while (slam->loop_BA_is_running()) {
+            std::this_thread::sleep_for(std::chrono::microseconds(5000));
+        }
+
+        // automatically close the viewer
+        if (auto_term->is_set()) {
+            if (viewer_string == "pangolin_viewer") {
+#ifdef HAVE_PANGOLIN_VIEWER
+                viewer->request_terminate();
+#endif
+            }
+            if (viewer_string == "socket_publisher") {
+#ifdef HAVE_SOCKET_PUBLISHER
+                publisher->request_terminate();
+#endif
+            }
+        }
+    });
+
+    // run the viewer in the current thread
+    if (viewer_string == "pangolin_viewer") {
+#ifdef HAVE_PANGOLIN_VIEWER
+        viewer->run();
+#endif
+    }
+    if (viewer_string == "socket_publisher") {
+#ifdef HAVE_SOCKET_PUBLISHER
+        publisher->run();
+#endif
+    }
+
+    thread->join();
+
+    // shutdown the slam process
+    slam->shutdown();
+
+    if (eval_log_dir->is_set()) {
+        const std::string& dir_path = eval_log_dir->value();
+        // output the trajectories for evaluation
+        slam->save_frame_trajectory(dir_path + "/frame_trajectory.txt", "TUM");
+        slam->save_keyframe_trajectory(dir_path + "/keyframe_trajectory.txt", "TUM");
+        // output the tracking times for evaluation
+        std::ofstream ofs(dir_path + "/track_times.txt", std::ios::out);
+        if (ofs.is_open()) {
+            for (const auto track_time : track_times) {
+                ofs << track_time << std::endl;
+            }
+            ofs.close();
+        }
+    }
+
+    if (!track_times.empty())
+    {
+        std::sort(track_times.begin(), track_times.end());
+        const auto total_track_time = std::accumulate(track_times.begin(), track_times.end(), 0.0);
+        std::cout << "median tracking time: " << track_times.at(track_times.size() / 2) << "[s]" << std::endl;
+        std::cout << "mean tracking time: " << total_track_time / track_times.size() << "[s]" << std::endl;
+    }
+
+    if (point_cloud_path->is_set()) {
+        if (!slam->save_point_cloud(point_cloud_path->value())) {
+            std::cerr << "Unable to save the point cloud." << std::endl;
+        }
+    }
+    if (keyframe_path->is_set()) {
+        if (!slam->save_keyframes(keyframe_path->value())) {
+            std::cerr << "Unable to save the keyframes." << std::endl;
+        }
+    }
+    if (map_db_path_out->is_set()) {
+        if (!slam->save_map_database(map_db_path_out->value())) {
+            std::cerr << "Unable to save the map database." << std::endl;
+        }
     }
 
 #ifdef USE_GOOGLE_PERFTOOLS
     ProfilerStop();
 #endif
-
-    return ret;
 }
