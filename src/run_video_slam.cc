@@ -65,9 +65,10 @@ void mono_tracking(const std::vector<std::string>& video_file_paths,
                    std::vector<double>& track_times) {
     double timestamp = start_timestamp;
     for (unsigned int i = 0; i < video_file_paths.size(); ++i) {
+        std::cout << "processing video \"" << video_file_paths[i] << '"' << std::endl;
         auto video = cv::VideoCapture(video_file_paths[i]);
         if (!video.isOpened()) {
-            spdlog::warn("Unable to open video \"{}\"", video_file_paths[i]);
+            std::cerr << "unable to open video" << std::endl;
             continue;
         }
         video.set(0, start_times[i]);
@@ -334,6 +335,7 @@ int main(int argc, char* argv[]) {
         while (slam->loop_BA_is_running()) {
             std::this_thread::sleep_for(std::chrono::microseconds(5000));
         }
+        std::cout << "finished processing videos" << std::endl;
 
         // automatically close the viewer
         if (auto_term->is_set()) {
