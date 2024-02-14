@@ -408,6 +408,15 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    slam.reset();
+#ifdef HAVE_PANGOLIN_VIEWER
+    if (viewer)
+        viewer.reset();
+#endif
+#ifdef HAVE_SOCKET_PUBLISHER
+    if (publisher)
+        publisher.reset();
+#endif
 #ifdef USE_GOOGLE_PERFTOOLS
     ProfilerStop();
 #endif
