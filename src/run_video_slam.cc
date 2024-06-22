@@ -71,6 +71,8 @@ void mono_tracking(const std::vector<std::string>& video_file_paths,
             std::cerr << "unable to open video" << std::endl;
             continue;
         }
+        unsigned int total_frames = video.get(cv::CAP_PROP_FRAME_COUNT);
+        std::cout << "video frames: " << total_frames  << std::endl;
         video.set(0, start_times[i]);
 
         cv::Mat frame;
@@ -92,6 +94,7 @@ void mono_tracking(const std::vector<std::string>& video_file_paths,
 
             if (!frame.empty() && (num_frame % frame_skip == 0)) {
                 // input the current frame and estimate the camera pose
+                slam->set_progress(num_frame, total_frames);
                 slam->feed_monocular_frame(frame, timestamp, mask);
             }
 
